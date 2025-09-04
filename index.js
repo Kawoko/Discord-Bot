@@ -12,6 +12,9 @@ const token = process.env.TOKEN;
 const fs = require('node:fs');
 const path = require('node:path');
 
+const express = require('express');
+const app = express();
+
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -174,4 +177,10 @@ process.on('SIGINT', () => {
   console.log('Shutting down...');
   client.destroy();
   process.exit(0);
+});
+
+app.get('/', (req, res) => res.send('Bot is alive!'));
+
+app.listen(process.env.PORT || 3000, () => {
+    console.log('Web server running...');
 });
