@@ -148,7 +148,7 @@ module.exports = {
 
 		// Main embed
 		const embed = new EmbedBuilder()
-			.setTitle("⚖️ ADV Games Moderation Guide")
+			.setTitle("⚖️ Moderation Guide")
 			.setDescription("Select an offense from the dropdown to view details.")
 			.setColor(0x2b2d31)
 			.setFooter({ text: "Updated 28 Aug 2025" });
