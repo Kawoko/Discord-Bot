@@ -6,14 +6,26 @@ const {
   EmbedBuilder,
   Collection,
   Events,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
+  ActionRowBuilder,
+  MessageFlags,
 } = require('discord.js');
 
 const token = process.env.TOKEN;
 const fs = require('node:fs');
 const path = require('node:path');
 
+const rewardsCmd = require('./commands/utility/rewards.js');
+const Rewards = require('./rewards');
+
 const express = require('express');
 const app = express();
+
+const EXP_STORE_PATH = path.join(__dirname, 'role-expiries.json');
+const activeExpiryTimers = new Map();
+
 
 const client = new Client({
   intents: [
@@ -24,13 +36,11 @@ const client = new Client({
   ],
 });
 
-// -------- Dyno IDs per source guild --------
 const DYNO_BY_GUILD = new Map([
   ['1177552024724848730', '1224087535639068672'], // guild A -> Dyno ID
   ['1143532840567459840', '1264101019285983273'], // guild B -> Dyno ID
 ]);
 
-// -------- Routes (source -> destination) --------
 const ROUTES = [
   {
     sourceGuildId:  '1177552024724848730',
@@ -45,6 +55,31 @@ const ROUTES = [
     targetChannelId:'1413198987992764517',
   },
 ];
+
+// ---- message monitor config ----
+const MONITOR_GUILD_ID = '1143532840567459840';
+const MONITOR_CHANNEL_IDS = new Set([
+  '1437864773827170495',
+  '1437864738381103194',
+  '1425839807136796823',
+  '1381955334339428372',
+  '1429178579505250388',
+  '1421165587484377161',
+  '1393658454316417185',
+  '1369919058597773323',
+  '1369919676338929664',
+]);
+
+const ROLE_BY_OUTCOME = new Map([
+  ['2x',  '1438197891134128249'],
+  ['3x',  '1438198028979666955'],
+  ['4x',  '1438198058251714660'],
+  ['5x',  '1438198078526984304'],
+  ['10x', '1438198106402328680'],
+]);
+
+const MONITOR_ECHO = null; 
+// ---- message monitor end
 
 // lookup maps / caches
 const routeBySource = new Map(ROUTES.map(r => [`${r.sourceGuildId}:${r.sourceChannelId}`, r]));
@@ -65,6 +100,127 @@ if (fs.existsSync(foldersPath)) {
   }
 }
 
+function randInt(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
+function formatPct(p) { return `${(p * 100).toFixed(2)}%`; }
+
+function getRoleForResult(result) {
+  return ROLE_BY_OUTCOME.get(result.type) || null;
+}
+
+function loadExpiryStore() {
+  try { return JSON.parse(fs.readFileSync(EXP_STORE_PATH, 'utf8')); }
+  catch { return []; }
+}
+function saveExpiryStore(arr) {
+  fs.writeFileSync(EXP_STORE_PATH, JSON.stringify(arr, null, 2));
+}
+function addExpiryRecord(rec) {
+  const all = loadExpiryStore();
+  // de-dup by (guildId,userId,roleId)
+  const key = `${rec.guildId}:${rec.userId}:${rec.roleId}`;
+  const existingIdx = all.findIndex(r => `${r.guildId}:${r.userId}:${r.roleId}` === key);
+  if (existingIdx >= 0) all[existingIdx] = rec; else all.push(rec);
+  saveExpiryStore(all);
+}
+function removeExpiryRecord(guildId, userId, roleId) {
+  const all = loadExpiryStore().filter(r => !(r.guildId === guildId && r.userId === userId && r.roleId === roleId));
+  saveExpiryStore(all);
+}
+
+function scheduleRemovalTimer(client, guildId, userId, roleId, expiresAtMs) {
+  const key = `${guildId}:${userId}:${roleId}`;
+  // clear previous timer if any
+  const prev = activeExpiryTimers.get(key);
+  if (prev) clearTimeout(prev);
+
+  const delay = Math.max(0, expiresAtMs - Date.now());
+  const t = setTimeout(async () => {
+    activeExpiryTimers.delete(key);
+    try {
+      const guild = await client.guilds.fetch(guildId);
+      const member = await guild.members.fetch(userId);
+      // only remove if role still present
+      if (member.roles.cache.has(roleId)) {
+        await member.roles.remove(roleId, 'Reward duration expired (persisted)');
+      }
+    } catch (e) {
+      console.warn('Scheduled removal failed:', e?.message || e);
+    } finally {
+      removeExpiryRecord(guildId, userId, roleId);
+    }
+  }, delay);
+
+  activeExpiryTimers.set(key, t);
+}
+
+async function grantTimedRolePersist(client, guildId, userId, roleId, hours) {
+  if (!roleId) return;
+  const expiresAtMs = Date.now() + hours * 60 * 60 * 1000;
+
+  try {
+    const guild = await client.guilds.fetch(guildId);
+    const member = await guild.members.fetch(userId);
+
+    await member.roles.add(roleId, `Reward win for ${hours}h`);
+    console.log(`Added role ${roleId} to ${userId} for ${hours}h`);
+
+    addExpiryRecord({ guildId, userId, roleId, expiresAt: expiresAtMs });
+    scheduleRemovalTimer(client, guildId, userId, roleId, expiresAtMs);
+  } catch (e) {
+    console.warn('grantTimedRolePersist failed:', e?.message || e);
+  }
+}
+
+async function reconcileRoleExpiries(client) {
+  const all = loadExpiryStore();
+  if (!all.length) return;
+
+  for (const rec of all) {
+    const { guildId, userId, roleId, expiresAt } = rec;
+    if (!guildId || !userId || !roleId || !expiresAt) continue;
+
+    if (Date.now() >= expiresAt) {
+      // expired while bot was offline -> remove now
+      try {
+        const guild = await client.guilds.fetch(guildId);
+        const member = await guild.members.fetch(userId);
+        if (member.roles.cache.has(roleId)) {
+          await member.roles.remove(roleId, 'Expired while bot was offline');
+        }
+      } catch (e) {
+        console.warn('Offline cleanup failed:', e?.message || e);
+      } finally {
+        removeExpiryRecord(guildId, userId, roleId);
+      }
+    } else {
+      // not expired -> re-schedule
+      scheduleRemovalTimer(client, guildId, userId, roleId, expiresAt);
+    }
+  }
+}
+
+function computeResolvedChance(result, store) {
+  const p = store.baseProbabilities;
+  if (['2x','3x','4x','5x'].includes(result.type)) {
+    return Number(p[result.type]) || 0;
+  }
+  if (result.type === '10x') {
+    const s = store.specialSplit;
+    const sum = Number(s['10x']) + Number(s['GAMEPASS']) + Number(s['P2W']);
+    return (Number(p['SPECIAL']) || 0) * (Number(s['10x']) / sum);
+  }
+  if (result.type === 'GAMEPASS' || result.type === 'P2W') {
+    const s = store.specialSplit;
+    const b = store.bonusTierWeights;
+    const sumS = Number(s['10x']) + Number(s['GAMEPASS']) + Number(s['P2W']);
+    const sumB = Number(b.I) + Number(b.II) + Number(b.III);
+    return (Number(p['SPECIAL']) || 0) * (Number(s[result.type]) / sumS) * (Number(b[result.tier]) / sumB);
+  }
+  return 0;
+}
+
+
+
 client.once(Events.ClientReady, async () => {
   console.log(`Bot is ready as ${client.user.tag}`);
   // warm destination channels (best effort)
@@ -76,24 +232,99 @@ client.once(Events.ClientReady, async () => {
       if (chan?.isTextBased()) targetCache.set(key, chan);
     } catch {}
   }
+
+  // ⬇️ Add this
+  await reconcileRoleExpiries(client);
 });
 
-// ---------- Appeals forwarder ----------
-// ... keep your existing requires, client init, DYNO_BY_GUILD, ROUTES, loaders, etc.
+// Per-message reward roll (robust)
+client.on(Events.MessageCreate, async (message) => {
+  try {
+    if (!message.guildId || message.webhookId || message.author?.bot) return;
+    if (message.guildId !== MONITOR_GUILD_ID) return;
+    if (!MONITOR_CHANNEL_IDS.has(message.channelId)) return;
 
-// ---------- Appeals forwarder (with thread + reactions) ----------
+    const result = Rewards.rollOnce(message);
+    if (!result) return; // most messages: no hit
+
+    const store = Rewards.loadStore();
+    const durationHours = randInt(1, 24);
+
+    const embed = await buildWinEmbed(client, message, result, store, durationHours);
+    const msgChannel = "1438214792866299944";
+
+    await client.channels.fetch(msgChannel).then(channel => {
+      if (channel?.isTextBased()) channel.send({ embeds: [embed] });
+
+      //Send ping to the msgChannel
+      channel.send({
+        content: `<@${message.author.id}>`,
+        allowedMentions: {
+          users: [message.author.id],
+          roles: [],
+          parse: []
+        }
+      });
+      
+    });
+
+    // grant per-outcome role for duration
+  try {
+    const roleId = getRoleForResult(result);
+    await grantTimedRolePersist(client, message.guildId, message.author.id, roleId, durationHours);
+  } catch (e) {
+    console.warn('Timed role grant skipped:', e?.message || e);
+  }
+
+  } catch (err) {
+    console.error('Reward listener failed:', err);
+  }
+});
+
+async function buildWinEmbed(client, message, result, store, durationHours) {
+  const chance = computeResolvedChance(result, store);
+  let rewardLine = '';
+
+  if (['2x','3x','4x','5x','10x'].includes(result.type)) {
+    rewardLine = `**${result.type} XP** multiplier`;
+  } else if (result.type === 'P2W') {
+    const ranges = { I: [10,15], II: [15,25], III: [25,50] };
+    const [lo, hi] = ranges[result.tier];
+    const amount = randInt(lo, hi);
+    rewardLine = `**P2W currency**: **${amount}** (Tier **${result.tier}**)`;
+    result.amount = amount;
+  } else if (result.type === 'GAMEPASS') {
+    const textByTier = {
+      I: '1 gamepass up to **100 R$**',
+      II:'1 gamepass up to **250 R$**',
+      III:'**Gamepass by choice**'
+    };
+    rewardLine = `**Gamepass**: ${textByTier[result.tier]} (Tier **${result.tier}**)`;
+  }
+
+  return new EmbedBuilder()
+    .setTitle('🎉 Someone has won!')
+    .setDescription('Congrats! Here are the details of your reward.')
+    .setColor(0x4ade80)
+    .addFields(
+      { name: 'Winner', value: `<@${message.author.id}>`, inline: true },
+      { name: 'Outcome', value: rewardLine, inline: false },
+      { name: 'Duration', value: `${durationHours}h`, inline: true },
+      { name: 'Current win chance', value: formatPct(chance), inline: true },
+      { name: 'Message', value: `[Jump to message](${message.url})`, inline: false },
+    )
+    .setTimestamp();
+}
+
 client.on('messageCreate', async (message) => {
   if (!message.guildId || !message.embeds?.length) return;
 
-  // route must match this guild+channel
   const route = routeBySource.get(`${message.guildId}:${message.channelId}`);
   if (!route) return;
 
-  // author must match the Dyno ID for this guild
   const expectedDynoId = DYNO_BY_GUILD.get(message.guildId);
   if (!expectedDynoId || message.author?.id !== expectedDynoId) return;
 
-  // resolve destination
   const destKey = `${route.targetGuildId}:${route.targetChannelId}`;
   let target = targetCache.get(destKey);
   try {
@@ -105,13 +336,11 @@ client.on('messageCreate', async (message) => {
       targetCache.set(destKey, c);
     }
 
-    // clone embeds 1:1
     const embeds = message.embeds.map(e => {
       try { return EmbedBuilder.from(e); }
       catch { return new EmbedBuilder(e?.data ?? e?.toJSON?.() ?? {}); }
     });
 
-    // original message link
     const jumpLink = message.url;
 
     // --- send the forwarded message ---
@@ -149,23 +378,92 @@ client.on('messageCreate', async (message) => {
   }
 });
 
-// ---------- interactions (unchanged) ----------
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
+    // slash commands
     if (interaction.isChatInputCommand()) {
       const command = interaction.client.commands.get(interaction.commandName);
       if (command) await command.execute(interaction);
-    } else if (interaction.isModalSubmit() && interaction.customId === 'staffHelpModal') {
+      return;
+    }
+
+    // your staffHelpModal
+    if (interaction.isModalSubmit() && interaction.customId === 'staffHelpModal') {
       const staffCommand = interaction.client.commands.get('staff');
       if (staffCommand?.handleModal) await staffCommand.handleModal(interaction);
+      return;
     }
+
+    // Rewards: select → modal (central handler variant)
+    if (interaction.isStringSelectMenu() && interaction.customId === rewardsCmd.SELECT_ID) {
+      const selected = interaction.values[0];
+
+      const modal = new ModalBuilder()
+        .setCustomId(`${rewardsCmd.MODAL_ID}:${selected}`)
+        .setTitle('Edit reward chance / weight');
+
+      const input = new TextInputBuilder()
+        .setCustomId(rewardsCmd.INPUT_ID)
+        .setLabel(`New numeric value for ${selected}`)
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder('e.g. 0.02 or 1/50 or 60')
+        .setRequired(true);
+
+      const row = new ActionRowBuilder().addComponents(input);
+      modal.addComponents(row);
+
+      await interaction.showModal(modal);
+      return;
+    }
+
+    if (interaction.isModalSubmit() && interaction.customId.startsWith(rewardsCmd.MODAL_ID)) {
+      const selected = interaction.customId.slice(rewardsCmd.MODAL_ID.length + 1);
+      const raw = interaction.fields.getTextInputValue(rewardsCmd.INPUT_ID).trim();
+
+      let value;
+      if (/^\d+\s*\/\s*\d+$/.test(raw)) {
+        const [a, b] = raw.split('/').map(Number);
+        value = a / b;
+      } else {
+        value = Number(raw);
+      }
+
+      if (!Number.isFinite(value) || value <= 0) {
+        return interaction.reply({
+          content: 'Please provide a positive number (like `0.02` or `1/50`).',
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+
+      const store = Rewards.loadStore();
+      const [group, key] = selected.split(':');
+
+      if (group === 'base') {
+        store.baseProbabilities = store.baseProbabilities || {};
+        store.baseProbabilities[key] = value;
+      } else if (group === 'split') {
+        store.specialSplit[key] = value;
+      } else if (group === 'bonus') {
+        store.bonusTierWeights[key] = value;
+      } else {
+        return interaction.reply({ content: 'Unknown field selected.', flags: MessageFlags.Ephemeral });
+      }
+
+      Rewards.saveStore(store);
+
+      return interaction.reply({
+        content: `✅ Updated **${selected}** to \`${value}\`. (Probabilities are used as-is; split/bonus are normalized.)`,
+        flags: MessageFlags.Ephemeral,
+      });
+    }
+
   } catch (error) {
     console.error(error);
     try {
       if (interaction.replied || interaction.deferred) {
-        await interaction.followUp({ content: 'There was an error while executing this command!', flags: 64 });
+        await interaction.followUp({ content: 'There was an error while executing this command!', flags: MessageFlags.Ephemeral });
       } else {
-        await interaction.reply({ content: 'There was an error while executing this command!', flags: 64 });
+        await interaction.reply({ content: 'There was an error while executing this command!', flags: MessageFlags.Ephemeral });
       }
     } catch {}
   }
