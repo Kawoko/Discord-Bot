@@ -260,7 +260,7 @@ client.on(Events.MessageCreate, async (message) => {
     // -------------------------
     // 1) Send to the log channel
     // -------------------------
-    const logChannelId = "1367246422696530071";
+    const logChannelId = "1438214792866299944";
     const logChannel = await client.channels.fetch(logChannelId).catch(() => null);
 
     if (logChannel?.isTextBased()) {
