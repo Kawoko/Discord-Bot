@@ -275,68 +275,82 @@ client.on(Events.MessageCreate, async (message) => {
       });
     }
 
-    if (result.type === "P2W" || result.type === "GAMEPASS") {
-      const guild = message.guild;
-      if (!guild) return;
+if (result.type === "P2W" || result.type === "GAMEPASS") {
+  const guild = message.guild;
+  if (!guild) return;
 
-      const baseName = result.type === "P2W" ? "p2w" : "gamepass";
+  const baseName = result.type === "P2W" ? "p2w" : "gamepass";
 
-      const userSlug = message.author.username
-        .toLowerCase()
-        .replace(/[^a-z0-9]/g, "")
-        .slice(0, 10) || "user";
+  const userSlug = message.author.username
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "")
+    .slice(0, 10) || "user";
 
-      const channelName = `winner-${baseName}-${userSlug}`;
+  const baseChannelName = `winner-${baseName}-${userSlug}`;
 
-      const ticketChannel = await guild.channels.create({
-        name: channelName,
-        type: ChannelType.GuildText,
-        parent: TICKETS_CATEGORY_ID || undefined,
-        permissionOverwrites: [
-          {
-            id: guild.roles.everyone,
-            deny: [PermissionFlagsBits.ViewChannel]
-          },
-          {
-            id: message.author.id,
+  // Make sure we can see all channels in cache
+  await guild.channels.fetch();
+
+  // Find existing winner channels for this user & reward type
+  const existing = guild.channels.cache.filter(ch =>
+    ch.type === ChannelType.GuildText &&
+    ch.parentId === (TICKETS_CATEGORY_ID || ch.parentId) && // same category (if set)
+    ch.name.startsWith(baseChannelName)
+  );
+
+  // If none -> use base name; if some -> add numeric suffix
+  let channelName = baseChannelName;
+  if (existing.size > 0) {
+    // Find highest numeric suffix used so far
+    let maxN = 1;
+    for (const ch of existing.values()) {
+      const m = ch.name.match(/^.+-(\d+)$/);
+      if (m) {
+        const n = Number(m[1]);
+        if (Number.isFinite(n) && n >= maxN) maxN = n + 1;
+      } else {
+        // the plain base name exists -> next is 2
+        if (maxN === 1) maxN = 2;
+      }
+    }
+    if (maxN > 1) channelName = `${baseChannelName}-${maxN}`;
+  }
+
+  const ticketChannel = await guild.channels.create({
+    name: channelName,
+    type: ChannelType.GuildText,
+    parent: TICKETS_CATEGORY_ID || undefined,
+    permissionOverwrites: [
+      {
+        id: guild.roles.everyone,
+        deny: [PermissionFlagsBits.ViewChannel]
+      },
+      {
+        id: message.author.id,
+        allow: [
+          PermissionFlagsBits.ViewChannel,
+          PermissionFlagsBits.SendMessages,
+          PermissionFlagsBits.ReadMessageHistory
+        ]
+      },
+      ...(STAFF_ROLE_ID
+        ? [{
+            id: STAFF_ROLE_ID,
             allow: [
               PermissionFlagsBits.ViewChannel,
               PermissionFlagsBits.SendMessages,
-              PermissionFlagsBits.ReadMessageHistory
+              PermissionFlagsBits.ReadMessageHistory,
+              PermissionFlagsBits.ManageChannels
             ]
-          },
-          ...(STAFF_ROLE_ID
-            ? [
-                {
-                  id: STAFF_ROLE_ID,
-                  allow: [
-                    PermissionFlagsBits.ViewChannel,
-                    PermissionFlagsBits.SendMessages,
-                    PermissionFlagsBits.ReadMessageHistory,
-                    PermissionFlagsBits.ManageChannels
-                  ]
-                }
-              ]
-            : [])
-        ]
-      });
+          }]
+        : [])
+    ]
+  });
 
-      await ticketChannel.send(
-        `Please wait for Staff Member to reply to your ticket <@${message.author.id}>`
-      );
-    }
-
-    try {
-      const roleId = getRoleForResult(result);
-      await grantTimedRolePersist(client, message.guildId, message.author.id, roleId, durationHours);
-    } catch (e) {
-      console.warn("Timed role grant skipped:", e?.message || e);
-    }
-
-  } catch (err) {
-    console.error("Reward listener failed:", err);
-  }
-});
+  await ticketChannel.send(
+    `Please wait for Staff Member to reply to your ticket <@${message.author.id}>`
+  );
+};
 
 async function buildWinEmbed(client, message, result, store, durationHours) {
   const chance = computeResolvedChance(result, store);
