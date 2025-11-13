@@ -11,6 +11,8 @@ const {
   TextInputStyle,
   ActionRowBuilder,
   MessageFlags,
+  ChannelType,
+  PermissionFlagsBits,
 } = require('discord.js');
 
 const token = process.env.TOKEN;
@@ -26,6 +28,8 @@ const app = express();
 const EXP_STORE_PATH = path.join(__dirname, 'role-expiries.json');
 const activeExpiryTimers = new Map();
 
+const STAFF_ROLE_ID = null;
+const TICKETS_CATEGORY_ID = 1438502242293645413; 
 
 const client = new Client({
   intents: [
@@ -238,6 +242,7 @@ client.once(Events.ClientReady, async () => {
 });
 
 // Per-message reward roll (robust)
+// Per-message reward roll (robust)
 client.on(Events.MessageCreate, async (message) => {
   try {
     if (!message.guildId || message.webhookId || message.author?.bot) return;
@@ -251,33 +256,102 @@ client.on(Events.MessageCreate, async (message) => {
     const durationHours = randInt(1, 24);
 
     const embed = await buildWinEmbed(client, message, result, store, durationHours);
-    const msgChannel = "1438214792866299944";
 
-    await client.channels.fetch(msgChannel).then(channel => {
-      if (channel?.isTextBased()) channel.send({ embeds: [embed] });
+    // -------------------------
+    // 1) Send to the log channel
+    // -------------------------
+    const logChannelId = "1367246422696530071";
+    const logChannel = await client.channels.fetch(logChannelId).catch(() => null);
 
-      //Send ping to the msgChannel
-      channel.send({
+    if (logChannel?.isTextBased()) {
+      await logChannel.send({
         content: `<@${message.author.id}>`,
+        embeds: [embed],
         allowedMentions: {
           users: [message.author.id],
           roles: [],
           parse: []
         }
       });
-      
-    });
+    }
 
-    // grant per-outcome role for duration
-  try {
-    const roleId = getRoleForResult(result);
-    await grantTimedRolePersist(client, message.guildId, message.author.id, roleId, durationHours);
-  } catch (e) {
-    console.warn('Timed role grant skipped:', e?.message || e);
-  }
+    // ----------------------------------------------------
+    // 2) Create a PRIVATE TICKET CHANNEL (P2W or GAMEPASS)
+    // ----------------------------------------------------
+    if (result.type === "P2W" || result.type === "GAMEPASS") {
+      const guild = message.guild;
+      if (!guild) return;
+
+      const baseName = result.type === "P2W" ? "p2w" : "gamepass";
+
+      const userSlug = message.author.username
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, "")
+        .slice(0, 10) || "user";
+
+      const channelName = `winner-${baseName}-${userSlug}`;
+
+      const ticketChannel = await guild.channels.create({
+        name: channelName,
+        type: ChannelType.GuildText,
+        parent: TICKETS_CATEGORY_ID || undefined,
+        permissionOverwrites: [
+          {
+            id: guild.roles.everyone,
+            deny: [PermissionFlagsBits.ViewChannel]
+          },
+          {
+            id: message.author.id,
+            allow: [
+              PermissionFlagsBits.ViewChannel,
+              PermissionFlagsBits.SendMessages,
+              PermissionFlagsBits.ReadMessageHistory
+            ]
+          },
+          ...(STAFF_ROLE_ID
+            ? [
+                {
+                  id: STAFF_ROLE_ID,
+                  allow: [
+                    PermissionFlagsBits.ViewChannel,
+                    PermissionFlagsBits.SendMessages,
+                    PermissionFlagsBits.ReadMessageHistory,
+                    PermissionFlagsBits.ManageChannels
+                  ]
+                }
+              ]
+            : [])
+        ]
+      });
+
+      // Send embed + ping inside the ticket channel
+      await ticketChannel.send({
+        content: `<@${message.author.id}>`,
+        embeds: [embed],
+        allowedMentions: {
+          users: [message.author.id],
+          roles: [],
+          parse: []
+        }
+      });
+
+      await ticketChannel.send(
+        `Please wait for an admin to reply to your ticket <@${message.author.id}>`
+      );
+    }
+
+    // ----------------------------------------------------
+    // 3) ROLE GRANT (only for multiplier rewards)
+    // ----------------------------------------------------
+    try {
+      const roleId = getRoleForResult(result);
+      await grantTimedRolePersist(client, message.guildId, message.author.id, roleId, durationHours);
+    } catch (e) {
+      console.warn("Timed role grant skipped:", e?.message || e);
+    }
 
   } catch (err) {
-    console.error('Reward listener failed:', err);
+    console.error("Reward listener failed:", err);
   }
 });
 
