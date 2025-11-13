@@ -28,7 +28,7 @@ const app = express();
 const EXP_STORE_PATH = path.join(__dirname, 'role-expiries.json');
 const activeExpiryTimers = new Map();
 
-const STAFF_ROLE_ID = null;
+const STAFF_ROLE_ID = 1143536083565559930;
 const TICKETS_CATEGORY_ID = 1438502242293645413; 
 
 const client = new Client({
@@ -275,9 +275,6 @@ client.on(Events.MessageCreate, async (message) => {
       });
     }
 
-    // ----------------------------------------------------
-    // 2) Create a PRIVATE TICKET CHANNEL (P2W or GAMEPASS)
-    // ----------------------------------------------------
     if (result.type === "P2W" || result.type === "GAMEPASS") {
       const guild = message.guild;
       if (!guild) return;
@@ -324,25 +321,11 @@ client.on(Events.MessageCreate, async (message) => {
         ]
       });
 
-      // Send embed + ping inside the ticket channel
-      await ticketChannel.send({
-        content: `<@${message.author.id}>`,
-        embeds: [embed],
-        allowedMentions: {
-          users: [message.author.id],
-          roles: [],
-          parse: []
-        }
-      });
-
       await ticketChannel.send(
-        `Please wait for an admin to reply to your ticket <@${message.author.id}>`
+        `Please wait for Staff Member to reply to your ticket <@${message.author.id}>`
       );
     }
 
-    // ----------------------------------------------------
-    // 3) ROLE GRANT (only for multiplier rewards)
-    // ----------------------------------------------------
     try {
       const roleId = getRoleForResult(result);
       await grantTimedRolePersist(client, message.guildId, message.author.id, roleId, durationHours);
