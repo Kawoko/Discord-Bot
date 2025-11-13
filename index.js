@@ -296,23 +296,29 @@ async function buildWinEmbed(client, message, result, store, durationHours) {
   } else if (result.type === 'GAMEPASS') {
     const textByTier = {
       I: '1 gamepass up to **100 R$**',
-      II:'1 gamepass up to **250 R$**',
-      III:'**Gamepass by choice**'
+      II: '1 gamepass up to **250 R$**',
+      III: '**Gamepass by choice**'
     };
     rewardLine = `**Gamepass**: ${textByTier[result.tier]} (Tier **${result.tier}**)`;
+  }
+
+  // Build fields; only include "Duration" for multiplier/10x results
+  const fields = [
+    { name: 'Winner', value: `<@${message.author.id}>`, inline: true },
+    { name: 'Outcome', value: rewardLine, inline: false },
+    { name: 'Current win chance', value: formatPct(chance), inline: true },
+    { name: 'Message', value: `[Jump to message](${message.url})`, inline: false },
+  ];
+
+  if (['2x','3x','4x','5x','10x'].includes(result.type)) {
+    fields.splice(2, 0, { name: 'Duration', value: `${durationHours}h`, inline: true });
   }
 
   return new EmbedBuilder()
     .setTitle('🎉 Someone has won!')
     .setDescription('Congrats! Here are the details of your reward.')
     .setColor(0x4ade80)
-    .addFields(
-      { name: 'Winner', value: `<@${message.author.id}>`, inline: true },
-      { name: 'Outcome', value: rewardLine, inline: false },
-      { name: 'Duration', value: `${durationHours}h`, inline: true },
-      { name: 'Current win chance', value: formatPct(chance), inline: true },
-      { name: 'Message', value: `[Jump to message](${message.url})`, inline: false },
-    )
+    .addFields(fields)
     .setTimestamp();
 }
 
