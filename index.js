@@ -350,7 +350,13 @@ if (result.type === "P2W" || result.type === "GAMEPASS") {
   await ticketChannel.send(
     `Please wait for Staff Member to reply to your ticket <@${message.author.id}>`
   );
-};
+  } 
+
+  } catch (err) {
+    console.error("Reward listener failed:", err);
+  }
+});
+
 
 async function buildWinEmbed(client, message, result, store, durationHours) {
   const chance = computeResolvedChance(result, store);
