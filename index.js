@@ -29,7 +29,7 @@ const EXP_STORE_PATH = path.join(__dirname, 'role-expiries.json');
 const activeExpiryTimers = new Map();
 
 const STAFF_ROLE_ID = '1143536083565559930';
-const TICKETS_CATEGORY_ID = '1438502242293645413'; 
+const TICKETS_CATEGORY_ID = '1438507703935959121'; 
 
 const client = new Client({
   intents: [
