@@ -248,38 +248,90 @@ client.on(Events.MessageCreate, async (message) => {
     if (!MONITOR_CHANNEL_IDS.has(message.channelId)) return;
 
     const result = Rewards.rollOnce(message);
-    if (!result) return; // most messages: no hit
+    if (!result) return;
 
+    const guild = message.guild;
+    if (!guild) return;
+
+    const member = await guild.members.fetch(message.author.id);
+
+    // -----------------------------------------
+    // 0) CHECK IF USER ALREADY HAS REWARD ROLE
+    //    (XP multipliers only)
+    // -----------------------------------------
+    let rewardRole = null;
+    if (['2x', '3x', '4x', '5x', '10x'].includes(result.type)) {
+      rewardRole = getRoleForResult(result);  // should be one of ROLE_BY_OUTCOME
+      console.log(
+        `Roll result ${result.type} for ${member.user.tag}. Mapped role:`,
+        rewardRole
+      );
+
+      if (rewardRole && member.roles.cache.has(rewardRole)) {
+        console.log(
+          `⏭ Skipping reward for ${member.user.tag}; already has XP role ${rewardRole}`
+        );
+        return; // <--- NOTHING after this runs
+      }
+    }
+
+    // From here on out we know either:
+    // - user doesn't have the XP role, or
+    // - result is SPECIAL → P2W / GAMEPASS (no role to skip on)
     const store = Rewards.loadStore();
     const durationHours = randInt(1, 24);
 
     const embed = await buildWinEmbed(client, message, result, store, durationHours);
 
-    // -------------------------
-    // 1) Send to the log channel
-    // -------------------------
-    const logChannelId = "1438214792866299944";
-    const logChannel = await client.channels.fetch(logChannelId).catch(() => null);
+    const XP_CHANNEL  = '1438214792866299944';
+    const P2W_CHANNEL = '1439274777519849613';
 
-    if (logChannel?.isTextBased()) {
-      await logChannel.send({
+    // -----------------------------------------
+    // XP MULTIPLIERS → XP channel + timed role
+    // -----------------------------------------
+    if (['2x','3x','4x','5x','10x'].includes(result.type)) {
+      const xpChan = await client.channels.fetch(XP_CHANNEL).catch(() => null);
+
+      if (xpChan?.isTextBased()) {
+        await xpChan.send({
+          content: `<@${message.author.id}>`,
+          embeds: [embed],
+          allowedMentions: { users: [message.author.id] }
+        });
+      }
+
+      // give XP role (we already know they don't have it)
+      if (rewardRole) {
+        try {
+          await grantTimedRolePersist(
+            client,
+            guild.id,
+            message.author.id,
+            rewardRole,
+            durationHours
+          );
+        } catch (e) {
+          console.warn("Timed role error:", e?.message || e);
+        }
+      }
+
+      return; // IMPORTANT: don't fall into P2W/ticket logic
+    }
+
+    // -----------------------------------------
+    // P2W / GAMEPASS → P2W channel + ticket
+    // -----------------------------------------
+    const prizeChan = await client.channels.fetch(P2W_CHANNEL).catch(() => null);
+
+    if (prizeChan?.isTextBased()) {
+      await prizeChan.send({
         content: `<@${message.author.id}>`,
         embeds: [embed],
-        allowedMentions: {
-          users: [message.author.id],
-          roles: [],
-          parse: []
-        }
+        allowedMentions: { users: [message.author.id] }
       });
     }
 
-    // -------------------------
-    // 2) Ticket channel for P2W / GAMEPASS
-    // -------------------------
     if (result.type === "P2W" || result.type === "GAMEPASS") {
-      const guild = message.guild;
-      if (!guild) return;
-
       const baseName = result.type === "P2W" ? "p2w" : "gamepass";
 
       const userSlug = message.author.username
@@ -289,41 +341,35 @@ client.on(Events.MessageCreate, async (message) => {
 
       const baseChannelName = `winner-${baseName}-${userSlug}`;
 
-      // Make sure we can see all channels in cache
       await guild.channels.fetch();
 
-      // Find existing winner channels for this user & reward type
       const existing = guild.channels.cache.filter(ch =>
         ch.type === ChannelType.GuildText &&
-        ch.parentId === (TICKETS_CATEGORY_ID || ch.parentId) &&
+        ch.parentId === TICKETS_CATEGORY_ID &&
         ch.name.startsWith(baseChannelName)
       );
 
-      // If none -> use base name; if some -> add numeric suffix
       let channelName = baseChannelName;
       if (existing.size > 0) {
-        let maxN = 1;
+        let max = 1;
         for (const ch of existing.values()) {
           const m = ch.name.match(/^.+-(\d+)$/);
           if (m) {
             const n = Number(m[1]);
-            if (Number.isFinite(n) && n >= maxN) maxN = n + 1;
-          } else {
-            if (maxN === 1) maxN = 2;
+            if (n >= max) max = n + 1;
+          } else if (max === 1) {
+            max = 2;
           }
         }
-        if (maxN > 1) channelName = `${baseChannelName}-${maxN}`;
+        channelName = `${baseChannelName}-${max}`;
       }
 
       const ticketChannel = await guild.channels.create({
         name: channelName,
         type: ChannelType.GuildText,
-        parent: TICKETS_CATEGORY_ID || undefined,
+        parent: TICKETS_CATEGORY_ID,
         permissionOverwrites: [
-          {
-            id: guild.roles.everyone,
-            deny: [PermissionFlagsBits.ViewChannel]
-          },
+          { id: guild.roles.everyone, deny: [PermissionFlagsBits.ViewChannel] },
           {
             id: message.author.id,
             allow: [
@@ -332,28 +378,21 @@ client.on(Events.MessageCreate, async (message) => {
               PermissionFlagsBits.ReadMessageHistory
             ]
           },
-          ...(STAFF_ROLE_ID
-            ? [{
-                id: STAFF_ROLE_ID,
-                allow: [
-                  PermissionFlagsBits.ViewChannel,
-                  PermissionFlagsBits.SendMessages,
-                  PermissionFlagsBits.ReadMessageHistory,
-                  PermissionFlagsBits.ManageChannels
-                ]
-              }]
-            : [])
+          ...(STAFF_ROLE_ID ? [{
+            id: STAFF_ROLE_ID,
+            allow: [
+              PermissionFlagsBits.ViewChannel,
+              PermissionFlagsBits.SendMessages,
+              PermissionFlagsBits.ReadMessageHistory,
+              PermissionFlagsBits.ManageChannels
+            ]
+          }] : [])
         ]
       });
 
       await ticketChannel.send({
-        content: ``,
         embeds: [embed],
-        allowedMentions: {
-          users: [message.author.id],
-          roles: [],
-          parse: []
-        }
+        allowedMentions: { users: [message.author.id] }
       });
 
       await ticketChannel.send(
@@ -365,6 +404,7 @@ client.on(Events.MessageCreate, async (message) => {
     console.error("Reward listener failed:", err);
   }
 });
+
 
 
 async function buildWinEmbed(client, message, result, store, durationHours) {
