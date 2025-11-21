@@ -414,7 +414,7 @@ async function buildWinEmbed(client, message, result, store, durationHours) {
   if (['2x','3x','4x','5x','10x'].includes(result.type)) {
     rewardLine = `**${result.type} XP** multiplier`;
   } else if (result.type === 'P2W') {
-    const ranges = { I: [10,15], II: [15,25], III: [25,50] };
+    const ranges = { I: [25,35], II: [35,50], III: [50,75] };
     const [lo, hi] = ranges[result.tier];
     const amount = randInt(lo, hi);
     rewardLine = `**P2W currency**: **${amount}** (Tier **${result.tier}**)`;
