@@ -21,7 +21,7 @@ const DEFAULT_STORE = {
   // split inside SPECIAL (relative weights)
   specialSplit: { '10x': 1, 'GAMEPASS': 1, 'P2W': 1 },
   // bonus tiers (relative weights) for GAMEPASS / P2W
-  bonusTierWeights: { I: 60, II: 30, III: 10 },
+  bonusTierWeights: { I: 65, II: 30, III: 5 },
 };
 
 // ---- luck helper ----
