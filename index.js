@@ -105,7 +105,7 @@ if (fs.existsSync(foldersPath)) {
 }
 
 function randInt(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
-function formatPct(p) { return `${(p * 100).toFixed(2)}%`; }
+function formatPct(p) { return `${(p * 100).toFixed(5)}%`; }
 
 function getRoleForResult(result) {
   return ROLE_BY_OUTCOME.get(result.type) || null;

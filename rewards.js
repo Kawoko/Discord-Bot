@@ -12,11 +12,11 @@ const LUCK_20_ROLE = '1144540049220845668'; // +20% luck
 // Per-message PROBABILITIES (not weights). Small numbers; do not need to sum to 1.
 const DEFAULT_STORE = {
   baseProbabilities: {
-    '2x': 1 / 50,     // 0.02
-    '3x': 1 / 100,    // 0.01
-    '4x': 1 / 200,    // 0.005
-    '5x': 1 / 400,    // 0.0025
-    'SPECIAL': 1 / 800, // 0.00125 → then split among 10x / GAMEPASS / P2W
+    '2x': 1 / 150,     // 0.02
+    '3x': 1 / 250,    // 0.01
+    '4x': 1 / 350,    // 0.005
+    '5x': 1 / 550,    // 0.0025
+    'SPECIAL': 1 / 900, // 0.00125 → then split among 10x / GAMEPASS / P2W
   },
   // split inside SPECIAL (relative weights)
   specialSplit: { '10x': 1, 'GAMEPASS': 1, 'P2W': 1 },
