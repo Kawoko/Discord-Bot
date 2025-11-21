@@ -16,7 +16,7 @@ const DEFAULT_STORE = {
     '3x': 1 / 250,    // 0.01
     '4x': 1 / 350,    // 0.005
     '5x': 1 / 550,    // 0.0025
-    'SPECIAL': 1 / 900, // 0.00125 → then split among 10x / GAMEPASS / P2W
+    'SPECIAL': 1 / 1250, // 0.00125 → then split among 10x / GAMEPASS / P2W
   },
   // split inside SPECIAL (relative weights)
   specialSplit: { '10x': 1, 'GAMEPASS': 1, 'P2W': 1 },
