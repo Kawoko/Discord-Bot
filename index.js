@@ -43,7 +43,7 @@ const client = new Client({
 const DYNO_BY_GUILD = new Map([
   ['1177552024724848730', '1224087535639068672'], // guild A -> Dyno ID
   ['1143532840567459840', '1264101019285983273'], // guild B -> Dyno ID
-  ['1461741574743527425', '1462488734095245383'], // guild C -> Dyno ID
+  ['1461741574743527425', '1462853270404989119'], // guild C -> Dyno ID
 ]);
 
 const ROUTES = [
