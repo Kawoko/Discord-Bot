@@ -43,6 +43,7 @@ const client = new Client({
 const DYNO_BY_GUILD = new Map([
   ['1177552024724848730', '1224087535639068672'], // guild A -> Dyno ID
   ['1143532840567459840', '1264101019285983273'], // guild B -> Dyno ID
+  ['1461741574743527425', '1462488734095245383'], // guild C -> Dyno ID
 ]);
 
 const ROUTES = [
@@ -58,9 +59,14 @@ const ROUTES = [
     targetGuildId:  '1413174842936528926',
     targetChannelId:'1413198987992764517',
   },
+  {
+    sourceGuildId:  '1461741574743527425',
+    sourceChannelId:'1462563655471071442',
+    targetGuildId:  '1413174842936528926',
+    targetChannelId:'1413185642623664252',
+  },
 ];
 
-// ---- message monitor config ----
 const MONITOR_GUILD_ID = '1143532840567459840';
 const MONITOR_CHANNEL_IDS = new Set([
   '1437864773827170495',
